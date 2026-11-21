@@ -1,15 +1,151 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Document</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sampark – Broad Agenda</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
-    body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-    iframe { width: 100%; height: 100%; border: none; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #1e1e1e;
+      color: #fff;
+      min-height: 100vh;
+    }
+    header {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 10px 16px;
+      background: rgba(20, 20, 20, 0.92);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid #333;
+    }
+    header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
+    .controls { display: flex; align-items: center; gap: 6px; }
+    button, a.btn {
+      background: #2d2d2d; color: #fff; border: 1px solid #444;
+      border-radius: 6px; padding: 6px 12px; font-size: 14px;
+      cursor: pointer; text-decoration: none; line-height: 1;
+    }
+    button:hover, a.btn:hover { background: #3a3a3a; }
+    #zoomLabel { min-width: 52px; text-align: center; font-size: 13px; color: #bbb; }
+    #viewer {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 16px; padding: 20px 12px 40px;
+    }
+    canvas {
+      display: block; max-width: none;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+      background: #fff;
+    }
+    #status { padding: 40px; color: #aaa; text-align: center; }
+    @media (max-width: 600px) {
+      header h1 { font-size: 13px; }
+      button, a.btn { padding: 6px 9px; font-size: 13px; }
+    }
   </style>
 </head>
 <body>
-  <iframe src="Sampark_Broad Agenda_final.pdf"></iframe>
+  <header>
+    <h1>Sampark – Broad Agenda</h1>
+    <div class="controls">
+      <button id="zoomOut" title="Zoom out">−</button>
+      <span id="zoomLabel">Fit</span>
+      <button id="zoomIn" title="Zoom in">+</button>
+      <button id="fit" title="Fit to width">Fit</button>
+      <a class="btn" id="download" href="Sampark_Broad_Agenda.pdf" download>Download</a>
+    </div>
+  </header>
+
+  <main id="viewer">
+    <div id="status">Loading PDF…</div>
+  </main>
+
+  <script>
+    // Name of the PDF file sitting next to this index.html in the repo
+    const PDF_URL = "Sampark_Broad_Agenda.pdf";
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    const viewer = document.getElementById("viewer");
+    const statusEl = document.getElementById("status");
+    const zoomLabel = document.getElementById("zoomLabel");
+
+    let pdfDoc = null;
+    let zoom = null;        // null = fit to width
+    let renderToken = 0;
+
+    function fitScale(page) {
+      const base = page.getViewport({ scale: 1 });
+      const available = Math.min(viewer.clientWidth - 24, 1100);
+      return available / base.width;
+    }
+
+    async function renderAll() {
+      if (!pdfDoc) return;
+      const token = ++renderToken;
+      viewer.innerHTML = "";
+      const dpr = window.devicePixelRatio || 1;
+
+      for (let n = 1; n <= pdfDoc.numPages; n++) {
+        const page = await pdfDoc.getPage(n);
+        if (token !== renderToken) return;
+
+        const scale = zoom ?? fitScale(page);
+        zoomLabel.textContent = zoom ? Math.round(zoom * 100) + "%" : "Fit";
+
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+
+        // Render at device pixel ratio for crisp output on retina / phones
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = Math.floor(viewport.width) + "px";
+        canvas.style.height = Math.floor(viewport.height) + "px";
+        viewer.appendChild(canvas);
+
+        await page.render({
+          canvasContext: ctx,
+          viewport,
+          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null
+        }).promise;
+      }
+    }
+
+    async function currentScale() {
+      if (zoom) return zoom;
+      const page = await pdfDoc.getPage(1);
+      return fitScale(page);
+    }
+
+    document.getElementById("zoomIn").onclick = async () => {
+      zoom = Math.min((await currentScale()) * 1.25, 5);
+      renderAll();
+    };
+    document.getElementById("zoomOut").onclick = async () => {
+      zoom = Math.max((await currentScale()) / 1.25, 0.2);
+      renderAll();
+    };
+    document.getElementById("fit").onclick = () => { zoom = null; renderAll(); };
+
+    let resizeTimer;
+    window.addEventListener("resize", () => {
+      if (zoom !== null) return;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(renderAll, 200);
+    });
+
+    pdfjsLib.getDocument(PDF_URL).promise
+      .then(doc => { pdfDoc = doc; renderAll(); })
+      .catch(err => {
+        statusEl.innerHTML =
+          "Couldn't load the PDF.<br><small>" + err.message +
+          "</small><br><br><a class='btn' href='" + PDF_URL + "'>Open PDF directly</a>";
+        console.error(err);
+      });
+  </script>
 </body>
 </html>
